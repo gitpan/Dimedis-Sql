@@ -420,7 +420,8 @@ sub insert_null {
 	$self->msg;
 	
 	my $undef = undef;
-	
+	my $empty = "";
+
 	return if not $self->insert_update_check (
 		data => {
 			id		=> undef,
@@ -429,6 +430,7 @@ sub insert_null {
 			str_short	=> '',
 			str_long	=> '',
 			datum           => undef,
+			clob_data	=> \$empty,
 		},
 		what => 'insert',
 	);
@@ -533,11 +535,14 @@ sub insert_update_check {
 		$href->{$lob} = $$blob;
 	}
 
-	# make empty colums of the source data hash undef,
+	# make empty non-blob-colums of the source data hash undef,
 	# because Dimedis::Sql does this internally when inserting
 	# to get the same behaviour for all databases.
-	for ( @$data{keys %{$data}} ) {
-		$_ = undef if $_ eq '';
+
+	foreach my $key ( %{$data} ) {
+		if ( $type_href->{dsql_test}->{$key} !~ /lob/ ) {
+			$data->{$key} = undef if $data->{$key} eq '';
+		}
 	}
 
 	return $self->hash_compare ( $data, $href );

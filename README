@@ -80,7 +80,7 @@ DOCUMENTATION
         The export/import programs provide their own manpages.
 
 NOTE
-    The module name Dimedis::Ddl is subject to change, because
+    The module name Dimedis::Sql is subject to change, because
     having the company's name in the module's namespace isn't
     a good idea for publically available modules. Namespace
     suggestions are welcome, please send them to the author.

@@ -1,4 +1,4 @@
-# $Id: mysql.pm,v 1.9 2003/08/07 07:48:18 joern Exp $
+# $Id: mysql.pm,v 1.10 2003/08/15 08:51:07 joern Exp $
 
 package Dimedis::SqlDriver::mysql;
 
@@ -296,6 +296,12 @@ sub db_insert_or_update {
 			# Ggf. UTF8 draus machen
 			utf8::upgrade($val) if $self->{utf8};
 
+			# Leerstring zu NULL machen
+			# (wird hier gemacht, da CLOB's nicht so behandelt
+			#  werden dürfen - hier gibt es den Unterschied
+			#  zwischen NULL und '' noch)
+			$val = undef if $val eq '';
+
 			# alle übrigen Typen werden as is eingefügt
 			push @columns, $col;
 			push @values,  $val;
@@ -314,11 +320,17 @@ sub db_insert_or_update {
 			       join (",",@columns).
 			       ") values ($qm)",
 			params  => \@values,
+
 			no_utf8 => 1,	# Das haben wir schon gemacht,
 					# außer bei Blobs. Die werden bei
 					# MySQL as-is eingefügt, aber
 					# dürfen natürlich *nicht* nach
-					# UTF8 konvertiert werden
+					# UTF8 konvertiert werden,
+
+			no_nulling => 1,# Das haben wir schon gemacht,
+					# nur bei CLOBs nicht, weil hier
+					# '' und NULL unterscheidbar sein
+					# sollen.
 			
 		);
 		
@@ -338,7 +350,8 @@ sub db_insert_or_update {
 				       join(",", map("$_=?", @columns)).
 				       " where $par->{where}",
 				params => \@values,
-				no_utf8 => 1,
+				no_utf8		=> 1,
+				no_nulling	=> 1,
 			);
 		}
 	}

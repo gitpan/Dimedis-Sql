@@ -1,6 +1,12 @@
-$Id: Changes,v 1.29 2003/08/07 07:51:38 joern Exp $
+$Id: Changes,v 1.30 2003/08/15 08:51:12 joern Exp $
 
 Revision history for Perl extension Dimedis::Sql.
+
+0.31 15.08.2003 joern
+	- Bugfix: leere MySQL Clob's werden nun nicht mehr zu NULL
+	  gemacht. Leere Clob's dürfen grundsätzlich nicht zu NULL
+	  gemacht werden, da dies nicht datenbankübergreifend portabel
+	  ist.
 
 0.30 07.08.2003 joern
 	- Leer-Strings werden beim Einfügen / Updaten zu undef

@@ -4,7 +4,7 @@ use strict;
 use vars qw($VERSION);
 use Carp;
 
-$VERSION = '0.30';
+$VERSION = '0.31';
 
 my $exc = "Dimedis::Sql:";	# Exception-Type prefix
 
@@ -276,13 +276,9 @@ sub blob_read {
 
 sub do {
         my $self = shift;
-
 	my %par = @_;
-	
-        my $sql       = $par{sql};
-	my $par_cache = $par{cache};
-	my $no_utf8   = $par{no_utf8};
-	my $params    = $par{params};
+	my  ($sql, $par_cache, $no_utf8, $params, $no_nulling) =
+	@par{'sql','par_cache','no_utf8','params','no_nulling'};
 
 	$params ||= [];
 	
@@ -327,7 +323,11 @@ sub do {
 	}
 	croak "$exc:do\t$DBI::errstr\n$sql" if $DBI::errstr;
 
-	for ( @{$params} ) { $_ = undef if $_ eq '' };
+	if ( not $no_nulling ) {
+		for ( @{$params} ) {
+			$_ = undef if $_ eq ''
+		};
+	}
 
 	my $modified = $sth->execute (@{$params});
 	croak "$exc:do\t$DBI::errstr\n$sql" if $DBI::errstr;
