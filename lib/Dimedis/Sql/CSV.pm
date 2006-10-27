@@ -8,7 +8,7 @@ use Data::Dumper;
 use FileHandle;
 use File::Path;
 
-$VERSION = '0.1';
+$VERSION = '0.20';
 
 ##------------------------------------------------------------------------------
 # CLASS
@@ -67,6 +67,7 @@ sub new {
   my $filename  = $par{filename} or croak("'filename' missing");
   my $write     = $par{write};
   my $delimiter = $par{delimiter};
+  my $layer     = $par{layer};
 
   $delimiter = ";"  if $delimiter eq "";
 
@@ -74,17 +75,21 @@ sub new {
   
   if ( $write ) {
     #--- CSV-Datei zum Schreiben öffnen
-  	 open ($fh, ">> $filename") or die "Can't open file: $!\n";
+  	 open ($fh, ">> $filename")
+	 	or die "Can't open file: $!\n";
   }
   else {
     #--- CSV-Datei zum Lesen öffnen
 	 open ($fh, $filename) if -e $filename;
   }
 
+  #-- Ggf. IO Layer aktivieren
+  binmode $fh, $layer if $layer ne '';
+
   my $self = {
-	  			  fh   	   => $fh,
-				  delimiter	=> $delimiter
-  				 };
+	fh		=> $fh,
+	delimiter	=> $delimiter
+  };
 
   return bless $self, $class;	
 }
@@ -119,7 +124,7 @@ sub append {
 
   foreach ( @{$data_lr} ) {
 	 #--- escape '\'
-    s/\\/\\\\/g;
+	 s/\\/\\\\/g;
 	 #--- escape newlines
 	 s/\n/\\n/g;
 	 s/\r/\\r/g;

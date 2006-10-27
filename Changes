@@ -1,6 +1,92 @@
-$Id: Changes,v 1.30 2003/08/15 08:51:12 joern Exp $
+$Id: Changes,v 1.44 2006/10/20 09:57:50 cvsinst Exp $
 
 Revision history for Perl extension Dimedis::Sql.
+
+0.44 20.10.2006 joern
+        Bugfix:
+        - Dimedis::SqlDriver::mysql: cmpi() funktionierte bei
+          binary Spalten nicht.
+
+0.43 12.09.2006 joern
+        Bugfix:
+        - Bei Nicht-utf-8 Handles Daten mit utf-8 Flag vorm Einfügen
+          in die Datenbank nach windows-1252 konvertieren.
+
+0.42 08.09.2006 joern
+	Feature:
+	- beim Export werden keine Dateien für leere Blobs erzeugt
+
+0.41 16.09.2005 joern
+	Bugfix:
+	- Dimedis::SqlDriver::mysql: blob_read zerstörte Blobdaten
+	  beim Schreiben in ein FilehHandle wenn utf8 Modus aktiviert.
+
+0.40 19.07.2005 joern
+	Bugfix:
+	- Dimedis::SQL::Import: wenn "inserts_per_transaction" gesetzt
+	  wurden "überhängende" INSERT's am Ende nicht committed.
+
+0.39 01.02.2005 joern
+	Bugfix:
+	- Dimedis::SqlDriver::Oracle->db_contains(): Suche nach
+	  Begriffen in Großbuchstaben führte zu einer Oracle
+	  Exception wg. zu komplexer Abfrage.
+
+0.38 09.12.2004 joern
+	Bugfix:
+	- Dimedis::SqlDriver::mysql: die Verwendung von "set
+	  character set latin1" funktionierte nicht, da falsche
+	  collate eingestellt wurde (die System-Collate utf8_general_ci).
+	  Nun werden explizit die Variablen character_set_client,
+	  character_set_connection, character_set_results und
+	  collation_connection entsprechend gesetzt.
+
+0.37 23.11.2004 joern
+	Bugfix:
+	- Dimedis::SqlDriver::Oracle->db_contains(): alle
+	  Sonderzeichen escapen, sonst können immer noch
+	  "DRG-50937: query too complex" Fehler auftreten.
+
+0.36 22.11.2004 joern
+	Bugfix:
+	- Dimedis::SqlDriver::mysql: set_utf8() muß die
+	  Datenbankverbindung entsprechend einstellen.
+
+0.35 12.11.2004 joern
+	Features:
+	- Export Programm kann auch utf8 Datenbanken exportieren
+	- Import Programm kann sowohl latin1 als auch utf8 Daten
+	  importieren. Hierzu gibt es die neue Konfigurations-Option
+	  'recode', die die alte Option 'iso2utf8' ablöst
+	  (siehe Doku von dsql_import). Ein Konvertierung von utf8
+	  nach latin1 ist aber derzeit noch nicht implementiert.
+	- Dimedis::SqlDriver::mysql: bei MySQL Servern >= 4.1 wird
+	  nun die Datenbankverbindung auf CHARACTER SET UTF8
+	  gesetzt, wenn Dimedis::Sql->{utf8} gesetzt ist.
+	- dsql_export: mit der neuen Option 'include_tables' können
+	  ausgewählte Tabellen exportiert werden.
+
+	Bugfix:
+	- Dimedis::SqlDriver::mysql: CLOBs wurden bei einer
+	  utf8 Datenbank doppelt utf8 kodiert ins Filesystem
+	  geschrieben.
+
+0.34 15.09.2004 joern
+	- Bugfix: left_outer_join() funktionierte nicht im
+	  utf8 Modus.
+
+0.33 28.06.2004 joern
+	- Bugfix: Datei I/O mit utf8 Clobs funktionierte nicht
+	  immer, zumindest nicht unter Perl 5.8.2 (welches ein
+	  Bug in join() unter utf8 hat).
+	- Feature: man kann nun auch von Dimedis::Sql erben,
+	  indem die abgeleitete Klasse dynamisch in die
+	  Vererbungslinie der SqlDriver Module eingefügt wird.
+
+0.32 03.02.2004 joern
+	- Feature: Dimedis::SqlDriver::MySQL unterstützt jetzt
+	  auch die contains() Methode, allerdings ohne speziellen
+	  Volltext-Index sondern mit einer einfachen LIKE Suche.
 
 0.31 15.08.2003 joern
 	- Bugfix: leere MySQL Clob's werden nun nicht mehr zu NULL

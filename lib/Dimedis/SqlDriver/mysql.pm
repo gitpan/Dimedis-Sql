@@ -1,12 +1,15 @@
-# $Id: mysql.pm,v 1.10 2003/08/15 08:51:07 joern Exp $
+# $Id: mysql.pm,v 1.20 2006/10/20 09:57:43 cvsinst Exp $
 
 package Dimedis::SqlDriver::mysql;
 
 use strict;
-use vars qw($VERSION @ISA);
+use vars qw($VERSION @ISA $DEFAULT_CHARSET $DEFAULT_COLLATE);
 
-$VERSION = '0.09';
+$VERSION = '0.17';
 @ISA = qw(Dimedis::Sql);	# Vererbung von Dimedis::Sql
+
+$DEFAULT_CHARSET = "latin1";
+$DEFAULT_COLLATE = "latin1_german1_ci";
 
 use Carp;
 use File::Copy;
@@ -14,7 +17,56 @@ use FileHandle;
 
 my $exc = "Dimedis::SqlDriver::mysql:";	# Exception Prefix
 
+# set_utf8 muß überschrieben werden ==================================
+
+sub set_utf8 {
+	my $self = shift;
+	my ($utf8) = @_;
+	$self->{utf8} = $utf8;
+	$self->db_init;
+	return $utf8;
+}
+
 # offizielles Dimedis::SqlDriver Interface ===========================
+
+# init ---------------------------------------------------------------
+
+sub db_init {
+	my $self = shift;
+
+	# Bei MySQL ab 4.1 muß das Character Set der Verbindung auf
+	# auf den richtigen Wert gesetzt werden, sonst
+	# nimmt der MySQL Server zusätzliche Konvertierungen
+	# vor - damit stehen dann z.B. "doppelt" utf8 kodierte Zeichen
+	# in der Datenbank.
+
+	my $dbh = $self->{dbh};
+	my $version = $dbh->{mysql_serverinfo};
+	my @v = $version =~ /(\d+)/g;
+	my $num_version = $v[0]*10000+$v[1]*100+$v[2];
+
+	$self->{debug} &&
+		print STDERR "$exc:db_init: MySQL ".
+			     "Server version $version detected\n";
+
+	my $charset = $self->{utf8} ? "utf8"            : $DEFAULT_CHARSET;
+	my $collate = $self->{utf8} ? "utf8_general_ci" : $DEFAULT_COLLATE;
+
+	if ( $num_version >= 40100 ) {
+		$dbh->do ("set character_set_client='$charset'");
+		$dbh->do ("set character_set_connection='$charset'");
+		$dbh->do ("set character_set_results='$charset'");
+		$dbh->do ("set collation_connection='$collate'");
+		
+		$self->{debug} &&
+			print STDERR "$exc:db_init: version > 4.1 => set charset/collate $charset/$collate\n";
+	} else {
+		$self->{debug} &&
+			print STDERR "$exc:db_init: version < 4.1 => no charset setting\n";
+		}
+	
+	return 1;
+}
 
 # install ------------------------------------------------------------
 
@@ -84,10 +136,16 @@ sub db_blob_read {
 	
 	if ( $filename ) {
 		open (BLOB, "> $filename") or croak "can't write $filename";
+		# Kein UTF8 Handling nötig hier. Die BLOB Variable hat
+		# kein UTF8 Flag. Falls die DB UTF8 geliefert hat, können
+		# die Daten also raw geschrieben werden. Sonst müßte der
+		# IO Layer auf utf8 gesetzt werden *und* $blob müßte das
+		# UTF8-Flag bekommen. Überflüssig!
 		binmode BLOB;
 		print BLOB $blob;
 		close BLOB;
 		$blob = "";	# Speicher wieder freigeben
+
 	} elsif ( $filehandle ) {
 		binmode $filehandle;
 		print $filehandle $blob;
@@ -181,7 +239,7 @@ sub db_cmpi {
 	# (wurde durch utf8::upgrade in ->cmpi gesetzt)
 	Encode::_utf8_on($quoted) if $self->{utf8};
 
-	return "$not$par->{col} like $quoted";
+	return "${not}lower($par->{col}) like $quoted";
 }
 
 # use_db -------------------------------------------------------------
@@ -214,11 +272,23 @@ sub db_db_prefix {
 
 sub db_contains {
 	my $self = shift;
-	
 	my ($par) = @_;
-	my $cond;
 
-	# bei Informix z.Zt. nicht unterstüzt, deshalb undef returnen
+	my $col      = $par->{col};
+	my $vals     = $par->{vals};
+	my $logic_op = $par->{logic_op};
+
+	my $dbh      = $self->{dbh};
+
+	my $cond;
+	foreach my $val ( @{$vals} ) {
+		$cond .= "$col like ".
+			 $dbh->quote('%'.$val.'%').
+			 " $logic_op ";
+	}
+	
+	$cond =~ s/ $logic_op $//;
+	$cond = "($cond)";
 
 	return $cond;
 }
@@ -237,7 +307,7 @@ sub db_get_features {
 			nested => 1
 		},
 	  	cmpi => 1,
-		contains => 0,
+		contains => 1,
 		use_db => 1,
 		utf8 => 1,
 	};
@@ -279,11 +349,19 @@ sub db_insert_or_update {
 		} elsif ( $type eq 'blob' or $type eq 'clob' ) {
 
 			# Blob muß in jedem Fall im Speicher vorliegen
-			$val = $self->db_blob2memory($val);
+			$val = $self->blob2memory($val, $col, $type);
 
-			# Ggf. UTF8 draus machen
+			# Ggf. UTF8 draus machen (utf-8 Handling wird bei
+                        # Dimedis::Sql->do Aufruf abgeschaltet, das muss
+                        # der mysql Driver selbst machen, weil Blobs auch
+                        # via Params übergeben werden, da darf kein utf8::upgrade
+                        # drauf gemacht werden
 			if ( $self->{utf8} and $type_href->{$col} eq 'clob' ) {
 				utf8::upgrade($$val);
+			}
+			elsif ( !$self->{utf8} and $type_href->{$col} eq 'clob' ) {
+				$$val = Encode::encode("windows-1252", $$val)
+					if Encode::is_utf8($$val);
 			}
 
 			# Blobs können inline geinsertet 
@@ -293,8 +371,14 @@ sub db_insert_or_update {
 			$qm .= "?,";
 
 		} else {
-			# Ggf. UTF8 draus machen
-			utf8::upgrade($val) if $self->{utf8};
+			# utf8 Behandlung
+                        if  ( $self->{utf8} ) {
+        			utf8::upgrade($val);
+                        }
+                        else {
+				$val = Encode::encode("windows-1252", $val)
+					if Encode::is_utf8($val);
+                        }
 
 			# Leerstring zu NULL machen
 			# (wird hier gemacht, da CLOB's nicht so behandelt
@@ -309,9 +393,8 @@ sub db_insert_or_update {
 		}
 	}
 	$qm =~ s/,$//;	# letztes Komma bügeln
-	
+
 	# Insert oder Update durchführen
-	
 	if ( $par->{db_action} eq 'insert' ) {
 		# insert ausführen
 
@@ -337,6 +420,20 @@ sub db_insert_or_update {
 		$return_value = $self->{dbh}->{'mysql_insertid'};
 		
 	} else {
+        	# ggf. UTF8 Konvertierung der Parameter vornehmen
+                # (wird in Dimedis::Sql->do nicht gemacht, Kommentar s.o.)
+        	if ( $self->{utf8} ) {
+        		foreach my $p ( @{$par->{params}} ) {
+        			utf8::upgrade($p);
+        		}
+        	}
+        	else {
+        		foreach my $p ( @{$par->{params}} ) {
+        			$p = Encode::encode("windows-1252", $p)
+        				if Encode::is_utf8($p);
+        		}
+        	}
+
 		# Parameter der where Klausel in @value pushen
 		push @values, @{$par->{params}};
 		
@@ -357,39 +454,6 @@ sub db_insert_or_update {
 	}
 
 	return $return_value;
-}
-
-# BLOB ins Memory holen, wenn nicht schon da -------------------------
-
-sub db_blob2memory {
-	my $self = shift;
-
-	my ($val) = @_;
-
-	my $blob;
-	if ( ref $val and ref $val ne 'SCALAR' ) {
-		# Referenz und zwar keine Scalarreferenz
-		# => das ist ein Filehandle
-		# => reinlesen den Kram
-		binmode $val;
-		$$blob = join ("", <$val>);
-	} elsif ( not ref $val ) {
-		# keine Referenz
-		# => Dateiname
-		# => reinlesen den Kram
-		my $fh = new FileHandle;
-		open ($fh, $val) or croak "can't open file '$val'";
-		binmode $fh;
-		$$blob = join ("", <$fh>);
-		$self->{debug} && print STDERR "$exc:db_blob2memory: blob_size ($val): ", length($$blob), "\n";
-		close $fh;
-	} else {
-		# andernfalls ist val eine Skalarreferenz mit dem Blob
-		# => nix tun
-		$blob = $val;
-	}
-
-	return $blob;	
 }
 
 1;

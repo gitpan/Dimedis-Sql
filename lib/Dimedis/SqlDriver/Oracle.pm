@@ -3,7 +3,7 @@ package Dimedis::SqlDriver::Oracle;
 use strict;
 use vars qw($VERSION @ISA);
 
-$VERSION = '0.20';
+$VERSION = '0.23';
 @ISA = qw(Dimedis::Sql);	# Vererbung von Dimedis::Sql
 
 use Carp;
@@ -244,13 +244,9 @@ sub db_install {
 
 sub db_contains {
 	my $self = shift;
-	
 	my ($par) = @_;
-	my $cond;
-	
 	my $val_lr = $par->{vals};
-	my $value;
-	
+
 	#---- Die Sonderzeichen in den Values muessen escaped werden,
 	#---- da sonst "DRG-50937: query too complex" Fehler schnell
 	#---- auftreten koennen, wenn man bspw. nach "e-mail" sucht.
@@ -260,19 +256,23 @@ sub db_contains {
 	#---- Bei bspw. "e-mail" wird dann auch wieder nach "e" und "mail"
 	#---- gesucht, was wieder in einer too complex Suche resultieren kann.
 	#---- Daher die Zeichen einzeln escapen.
-	for (my $i=0; $i<scalar(@$val_lr); $i++ ) {
-	  $value = $val_lr->[$i];
-	  $value =~ s/([=;*>~&|,:#%_$?!-])/\\\1/g;
-	  $val_lr->[$i] = $value;
-	}
+	my @values;
+        foreach my $v ( @{$val_lr} ) {
+                my $value = $v;
+                $value =~ s/[^0-9a-z]+$//i; 
+                $value =~ s/([^0-9a-z])/\\$1/ig;
+                push @values, $value if $value ne '';
+        }        
 	
+	return "" if not @values;
+	
+	my $cond;
 	if ( $par->{search_op} eq 'sub' ) {
 		$cond = "contains($par->{col}, ".
 		$self->{dbh}->quote (
 		    join (
 			" ".$par->{logic_op}." ",
-			map "$_%",
-			    @{$val_lr}
+			map "$_%", @values
 		    )
 		).
 		") > 0";
@@ -508,26 +508,13 @@ sub db_put_blob {
 	$Dimedis::SqlDriver::Oracle::already_imported = 1;
 
 	my ($table, $where, $col, $val, $type_href, $param_lref) = @_;
-	my $blob;
 	
-	if ( ref $val and ref $val ne 'SCALAR' ) {
-		# Referenz und zwar keine Scalarreferenz
-		# => das ist ein Filehandle
-		binmode $val;
-		$$blob = join ("", <$val>);
-	} elsif ( not ref $val ) {
-		# keine Referenz
-		# => Dateiname
-		my $fh = new FileHandle;
-		open ($fh, $val) or croak "$exc:db_put_blob\tcan't open $val";
-		binmode $fh;
-		$$blob = join ("", <$fh>);
-		close $fh;
-	} else {
-		# andernfalls ist val eine Skalarreferenz mit dem Blob
-		$blob = $val;
-	}
-	
+	my $type = $type_href->{$col};
+
+	my $set_utf8 = $self->{utf8} && $type eq 'clob';
+
+	my $blob = $self->blob2memory($val, $col, $type);
+
 	# in $blob steht nun eine Skalarrereferenz auf den Blob
 
 	$self->{debug} && print STDERR "$exc:db_put_blob ".
@@ -538,12 +525,7 @@ sub db_put_blob {
 	}) or croak "$exc:db_put_blob\t$DBI::errstr";
 
 	my $ora_type;
-	$ora_type = $type_href->{$col} eq 'blob' ? ORA_BLOB() : ORA_CLOB();
-
-	if ( $type_href->{$col} eq 'clob' and $self->{utf8} ) {
-		$self->{debug} && print STDERR "$exc:db_put_blob clob utf8::upgrade\n";
-		utf8::upgrade($$blob);
-	}
+	$ora_type = $type eq 'blob' ? ORA_BLOB() : ORA_CLOB();
 
 	$self->{debug} && print STDERR "$exc:db_put_blob ora_type=$ora_type\n";
 

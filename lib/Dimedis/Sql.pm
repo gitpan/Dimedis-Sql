@@ -3,8 +3,10 @@ package Dimedis::Sql;
 use strict;
 use vars qw($VERSION);
 use Carp;
+use FileHandle;
+use Encode;
 
-$VERSION = '0.31';
+$VERSION = '0.44';
 
 my $exc = "Dimedis::Sql:";	# Exception-Type prefix
 
@@ -37,6 +39,9 @@ sub set_type			{ shift->{type}			= $_[1]	}
 sub set_cache			{ shift->{cache}		= $_[1]	}
 sub set_serial_write		{ shift->{serial_write}		= $_[1]	}
 sub set_utf8			{ shift->{utf8}			= $_[1]	}
+
+# Kann, muss aber nicht von Drivern implementiert werden
+sub db_init 			{ 1 }
 
 # Konstruktor --------------------------------------------------------
 
@@ -88,8 +93,17 @@ sub new {
 	# datenbankspezifische Methoden definieren
 	require "Dimedis/SqlDriver/$db_type.pm";
 
+	# diese Klasse in die Vererbungshierarchie einfügen
+	my $driver_isa = "Dimedis::SqlDriver::$db_type:\:ISA";
+	{ no strict; @{$driver_isa} = ( $class ); }
+
+	# diese Instanz auf die SqlDriver Klasse setzen
 	bless $self, "Dimedis::SqlDriver::$db_type";
 	
+	# Initialisierungsmethode aufrufen
+	$self->db_init;
+	
+	# features Hash initialisieren
 	$self->{db_features} = $self->db_get_features;
 
 	# ggf. Encode Modul laden
@@ -265,7 +279,7 @@ sub blob_read {
 	# ggf. UTF8 Flag setzen, wenn clob
 	if ( $blob and $self->{utf8} and
 	     $self->{type_href}->{$par{table}}->{$par{col}} eq 'clob' ) {
-	        $self->{debug} && print STDERR "$exc:db_blob_read: Encode::_utf8_on\n";
+	        $self->{debug} && print STDERR "$exc:db_blob_read: Encode::_utf8_on($par{col})\n";
 		Encode::_utf8_on($$blob);
 	}
 
@@ -288,7 +302,13 @@ sub do {
 			utf8::upgrade($p);
 		}
 	}
-	
+	elsif ( not $self->{utf8} and not $no_utf8 ) {
+		foreach my $p ( $par{sql}, @{$params} ) {
+			$p = Encode::encode("windows-1252", $p)
+				if Encode::is_utf8($p);
+		}
+	}
+
 	# Normalerweise werden SQL Statements hier von DBI gecached.
 	# Es gibt aber Befehle, bei denen das keinen Sinn macht.
 	# Deshalb gibt es drei Mechanismen, die das Caching steuern:
@@ -348,6 +368,12 @@ sub do_without_cache {
 	if ( $self->{utf8} ) {
 		foreach my $p ( $par{sql}, @{$params} ) {
 			utf8::upgrade($p);
+		}
+	}
+	elsif ( not $self->{utf8} ) {
+		foreach my $p ( $par{sql}, @{$params} ) {
+			$p = Encode::encode("windows-1252", $p)
+				if Encode::is_utf8($p);
 		}
 	}
 	
@@ -447,12 +473,24 @@ sub left_outer_join {
 
 	# ggf. UTF8 Konvertierung vornehmen
 	if ( $self->{utf8} ) {
-		foreach my $p ( @_ ) {
-			utf8::upgrade($p);
-		}
+		_utf8_upgrade_lref (\@_);
 	}
 	
 	return $self->db_left_outer_join (\@_);
+}
+
+sub _utf8_upgrade_lref {
+	my ($lref) = @_;
+	
+	foreach my $p ( @{$lref} ) {
+		if ( ref $p ) {
+			_utf8_upgrade_lref($p);
+		} else {
+			utf8::upgrade($p);
+		}
+	}
+
+	1;
 }
 
 # CMPI ---------------------------------------------------------------
@@ -559,6 +597,44 @@ sub get_features {
 	my $self = shift;
 	
 	return $self->{db_features};
+}
+
+# HELPDER METHODS FOR DRIVERS ----------------------------------------
+
+sub blob2memory {
+	my $self = shift;
+	my ($val, $col, $type, $layer) = @_;
+
+	$layer ||= $self->{utf8} && $type eq 'clob' ? ":utf8" : ":raw";
+
+	$self->{debug} && print STDERR "$exc:db_blob2memory col=$col type=$type layer=$layer\n";
+
+	my $blob;
+	if ( ref $val and ref $val ne 'SCALAR' ) {
+		# Referenz und zwar keine Scalarreferenz
+		# => das ist ein Filehandle
+		# => reinlesen den Kram
+		binmode $val, $layer;
+		{ local $/ = undef; $blob = <$val> }
+
+	} elsif ( not ref $val ) {
+		# keine Referenz
+		# => Dateiname
+		# => reinlesen den Kram
+		my $fh = new FileHandle;
+		open ($fh, $val) or croak "can't open file '$val'";
+		binmode $fh, $layer;
+		{ local $/ = undef; $blob = <$fh> }
+		close $fh;
+
+	} else {
+		# andernfalls ist val eine Skalarreferenz mit dem Blob
+		# => nur ggf. upgraden
+		utf8::upgrade($$val) if $layer eq ':utf8';
+		return $val;
+	}
+
+	return \$blob;
 }
 
 1;
@@ -978,7 +1054,8 @@ heraus in die Datenbank eingefügt (Übergabe als Skalarreferenz):
   open (FILE, '/tmp/uploadfile')
     or die "can't open /tmp/uploadfile';
   binmode FILE;
-  my $image = join ('', <FILE>);
+  my $image;
+  { local $/ = undef; $image = <FILE> };
   close FILE;
 
   my $id = $sqlh->insert (

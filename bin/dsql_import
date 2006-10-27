@@ -9,10 +9,10 @@ use File::Path;
 
 use Dimedis::Sql::Import;
 
-my $VERSION = "0.01";
+my $VERSION = "1.02";
 
 my $COPYRIGHT = <<__EOT;
-dsql_import, version $VERSION, Copyright 2002 dimedis GmbH
+dsql_import, version $VERSION, Copyright 2002-2004 dimedis GmbH
 __EOT
 
 my $USAGE = <<__EOT;
@@ -37,14 +37,13 @@ my $EXAMPLE_CONFIG = <<__EOT;
 #                              für die zu importierenden Tabellen abgelegt ist
 #
 # OPTIONAL:
-#  inserts_per_transaction  -- the export module performs a commit
-#                              after the given number of inserts
-#                              (e.g. value 1 is equivalent to AUTOCOMMIT ON) 
-#
-#                              Default: one commit per database table
-#
-# iso2utf8		    -- Daten im Filesystem sind in ISO-8859-1,
-#			       Datenbank ist UTF-8 (Unicode)
+#  inserts_per_transaction  -- Anzahl von INSERT Befehlen, die in einer
+#			       Transaktion zusammengefasst werden sollen.
+#			       Ein Wert von 1 entspricht AUTOCOMMIT ON.
+#  recode		    -- Zeichensatzkonvertierung, im Formt
+#			       CHARSET..CHARSET, z.B. latin1..utf8 für
+#			       den Import ISO-8859-1 kodierter Daten in eine
+#			       UTF8 Datenbank. Default ist latin1..latin1.
 
 {
   data_source    	  => 'dbi:Oracle:',
@@ -52,8 +51,8 @@ my $EXAMPLE_CONFIG = <<__EOT;
   password       	  => 'passwd',
   directory               => '/tmp/export',
   type_hash_file 	  => './prod/config/lib.install.sql.general.all_tables.config',
-  inserts_per_transaction => 1,
-  iso2utf8		  => 0,
+  inserts_per_transaction => 1000,
+  recode	  	  => 'latin1..utf8',
 }
   
 __EOT
@@ -107,14 +106,14 @@ main: {
 		RaiseError => 1,
 	}
   );
-	
+
   print "\nImporting data...\n";
 
   #--- execute database import
   my $import = Dimedis::Sql::Import->new(
-	    dbh		     => $dbh,
-      config 		 => $config,
-      quiet_mode => $opt{V},
+	dbh		=> $dbh,
+	config		=> $config,
+	quiet_mode	=> $opt{V},
   );
 	
   $import->do_import();
@@ -209,8 +208,7 @@ Tabellen abgelegt ist
 
 =back
 
-Zusätzlich gibt es einen optionalen Parameter, mit dem angegeben werden kann,
-nach wievielen DB-Inserts jeweils ein Commit erfolgen soll:
+Zusätzlich gibt es die folgenden optionalen Parameter:
 
 =over 4
 
@@ -224,6 +222,17 @@ eingefügten Datensatz committed wird.
 Wird der B<inserts_per_transaction>-Parameter nicht angegeben,
 erfolgt jeweils ein Commit pro Tabelle. 
 
+=item B<recode>
+
+Zeichensatzkonvertierung, im Formt CHARSET..CHARSET. Folgende Angaben
+sind hier möglich:
+
+  latin1..utf8
+  latin1..latin1
+  utf8..utf8
+
+Default ist latin1..latin1.
+
 =back 
 
 =head1 TYPE-HASH
@@ -231,34 +240,27 @@ erfolgt jeweils ein Commit pro Tabelle.
 Die im Konfigurationsdatei angegebene Type-Hash-Datei muss folgenden
 Aufbau haben (siehe auch B<Dimedis::Sql>):
 
-=for html
-<P>
+  $type_hash_ref = {
+    'table_name_x'    => {
+      'column_name_i' => 'serial',
+      'column_name_j' => 'varchar(999)',
+      'column_name_k' => 'clob',
+      'column_name_l' => 'blob' ,   
+    },
+    'table_name_y'    => {
+      'column_name_i' => 'numeric(2)',
+      'column_name_j' => 'blob',
+      'column_name_k' => 'char(16)',
+    },
+  };
 
-B<$type_hash_ref> = {
-  'table_name_x'    => {
-    'column_name_i' => 'serial',
-    'column_name_j' => 'varchar(999)',
-    'column_name_k' => 'clob',
-    'column_name_l' => 'blob' ,   
-  },
-  'table_name_y'    => {
-    'column_name_i' => 'numeric(2)',
-    'column_name_j' => 'blob',
-    'column_name_k' => 'char(16)',
-  },
-};
+=head1 AUTOREN
 
-=for html
-<P>
-
-Hier muss ein Eintrag für jede zu importierende DB-Tabelle vorhanden sein.
-
-=head1 AUTOR
-
-Sabine Tonn, sabine@dimedis.de
+  Sabine Tonn, sabine AT dimedis.de
+  Jörn Reder, joern AT dimedis.de
 
 =head1 COPYRIGHT
 
-Copyright (c) 2002 dimedis GmbH, All Rights Reserved
+Copyright (c) 2002-2004 dimedis GmbH, All Rights Reserved
 
 =cut

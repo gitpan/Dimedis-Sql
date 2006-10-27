@@ -10,7 +10,7 @@ use Data::Dumper;
 use FileHandle;
 use File::Path;
 
-$VERSION = '0.1';
+$VERSION = '0.21';
 
 ##------------------------------------------------------------------------------
 # CLASS
@@ -161,7 +161,9 @@ sub new {
               username       => $config->{username},
               dir            => $config->{directory},
               exclude_tables => $config->{exclude_tables},
+	      include_tables => $config->{include_tables},
               type_hash_file => $config->{type_hash_file},
+	      utf8	     => ($config->{utf8}?1:0),
               type_hash_ref  => $type_hash_ref,
               quiet_mode     => $quiet_mode,
               fh_meta        => $fh_meta,
@@ -185,6 +187,8 @@ sub do_export {
   
   my $exclude_string = join ( ", ", @{$self->{exclude_tables}} )
      if defined $self->{exclude_tables}; 
+  my $include_string = join ( ", ", @{$self->{include_tables}} )
+     if defined $self->{include_tables}; 
 
   #--- Startzeit und übergebene Parameter in die Meta-Datei schreiben
   print $fh_meta "Export.pm version $VERSION\n\n".
@@ -193,7 +197,9 @@ sub do_export {
                  "directory     : $self->{dir}\n" .
                  "data source   : $self->{data_source}\n" .
                  "schema        : $self->{username}\n" .
+		 "utf8          : $self->{utf8}\n" .
                  "exclude tables: $exclude_string \n" .
+		 "include tables: $include_string \n" .
                  "type hash file: $self->{type_hash_file}\n\n";
 
   #--- Spalteninformationen zu den bestehenden Tabellen holen
@@ -310,7 +316,7 @@ sub _get_table_names {
   
   my $schema = uc ( $self->{username} );
 
-  my ( $exclude_regexp, $sth, $table_name_key );
+  my ( $exclude_regexp, $include_regexp, $sth, $table_name_key );
 
   # --------------------------
   #  alle Tabellennamen holen
@@ -329,6 +335,17 @@ sub _get_table_names {
     $table_name_key = "TABLE_NAME";
   }
 
+  # -----------------------------------------------------------------
+  #  Regulären Ausdruck zusammenbauen, um die Tabellen zu ermitteln,
+  #  die exportiert werden sollen 
+  # -----------------------------------------------------------------
+  foreach my $include_table ( @{$self->{include_tables}} ) {
+    $include_table  =~ s/_/\_/;
+    $include_regexp .= "|$include_table";
+  }
+
+  $include_regexp = substr ( $include_regexp, 1 );
+  
   # -----------------------------------------------------------------
   #  Regulären Ausdruck zusammenbauen, um die Tabellen zu ermitteln,
   #  die nicht exportiert werden sollen 
@@ -352,6 +369,9 @@ sub _get_table_names {
     #--- überspringen, wenn die Tabelle nicht zum angegebenen Schema gehört
     #--- (bei mySQL wird kein Schema-Name zurückgegeben..)
     #next  if $table_info_hr->{TABLE_SCHEM} ne $schema;
+
+    #--- überspringen, wenn die Tabelle nicht importiert werden soll
+    next  if $include_regexp and $table_name !~ /^($include_regexp)$/i;
 
     #--- überspringen, wenn die Tabelle nicht exportiert werden soll
     next  if $table_name =~ /^($exclude_regexp)$/i;
@@ -383,13 +403,15 @@ sub _get_data {
 
   my $self = shift;
   
-  my $dbh = $self->{dbh};
+  my $dbh  = $self->{dbh};
+  my $utf8 = $self->{utf8};
 
   #--- neuen SQL-Handle erzeugen  
   my $sqlh = new Dimedis::Sql ( 
     dbh   => $dbh, 
     type  => $self->{type_hash_ref},
-    debug => 0 
+    debug => 0,
+    utf8  => $utf8, 
   );
 
   $self->_write_status( "\n" );
@@ -425,6 +447,7 @@ sub _get_data {
       filename  => $table_dir . "/data.dump",
       delimiter => "\t",
       write     => 1,
+      layer     => ($self->{utf8} ? ':utf8': ''),
     );
 
     # -----------------------------------------------------
@@ -525,9 +548,17 @@ sub _get_data {
               filename => "$table_dir/$filename",
           );
 
+          #--- Datei löschen, wenn leer (spart Verzeichniseinträge)
+          unlink "$table_dir/$filename" if -s "$table_dir/$filename" == 0;
+
           #--- Name der Datei in die Liste der selektierten Daten übernehmen
           $result_row->[$lob_columns{$lob_column_name}] = $filename;
         }
+      }
+
+      #--- Ggf. UTF8 Tagging durchführen
+      if ( $utf8 ) {
+	      Encode::_utf8_on($_) for @{$result_row};
       }
 
       #--- aktuellen Datensatz in die CVS-Datei schreiben

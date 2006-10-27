@@ -9,10 +9,10 @@ use File::Path;
 
 use Dimedis::Sql::Export;
 
-my $VERSION = "0.01";
+my $VERSION = "1.02";
 
 my $COPYRIGHT = <<__EOT;
-dsql_export, version $VERSION, Copyright 2002 dimedis GmbH
+dsql_export, version $VERSION, Copyright 2002-2004 dimedis GmbH
 __EOT
 
 my $USAGE = <<__EOT;
@@ -37,10 +37,18 @@ my $EXAMPLE_CONFIG = <<__EOT;
 #                     die zu exportierenden Tabellen abgelegt ist
 #
 # OPTIONAL:
-#  exclude_tables  -- Liste der Tabellen, die nicht exportiert werden sollen
+#  utf8		   -- Wenn die Datenbank in UTF8 kodiert ist, muß hier
+#		      eine 1 gesetzt werden.
+#  include_tables  -- Liste der Tabellen, die exportiert werden sollen
 #                     (Angabe von regulären Ausdrücken möglich, es wird immer
 #                      nach Tabellen gesucht, deren Name mit dem angegebenen
 #                      Ausdruck beginnt!)
+#  exclude_tables  -- Liste der Tabellen, die nicht exportiert werden sollen
+#		      Wird auf Tabellen, die ggf. include_tables passiert
+#		      haben angewendet.
+#                     (Angabe von regulären Ausdrücken möglich, es wird immer
+#                      nach Tabellen gesucht, deren Name mit dem angegebenen
+#                      Ausdruck beginnt!).
 #                      
 #                     Default: Exportiert werden alle Tabellen, die einen
 #                              Eintrag in der angegebenen Type-Hash-Datei
@@ -53,7 +61,8 @@ my $EXAMPLE_CONFIG = <<__EOT;
   password       => 'passwd',
   directory      => '/tmp/export',
   type_hash_file => './prod/config/lib.install.sql.general.all_tables.config',
-  exclude_tables => ['dr.*', 'test_table'],
+  include_tables => ['it.*'],
+  exclude_tables => ['it_test'],
 }
   
 __EOT
@@ -240,14 +249,26 @@ Tabellen abgelegt ist
 
 =back
 
-Zusätzlich gibt es einen optionalen Parameter, mit dem bestimmte Tabellen
-vom Export ausgeschlossen werden können:
+Zusätzlich gibt es optionale Parameter:
 
 =over 4
 
+=item B<utf8>
+
+Wenn die Datenbank in UTF8 kodiert ist, muß hier eine 1 gesetzt werden.
+
+=item B<include_tables>
+
+Liste der Tabellen, die ausschließlich exportiert werden sollen.
+
+Bei der Angabe der Tabellennamen können auch reguläre Ausdrücke verwendet
+werden. Es wird immer nach nach Tabellen gesucht, deren Name mit dem
+angegebenen Ausdruck beginnt!
+
 =item B<exclude_tables>
 
-Liste der Tabellen, die nicht exportiert werden sollen
+Liste der Tabellen, die nicht exportiert werden sollen. Wird angewendet
+auf die Tabellen, die B<include_tables> passiert haben.
 
 Bei der Angabe der Tabellennamen können auch reguläre Ausdrücke verwendet
 werden. Es wird immer nach nach Tabellen gesucht, deren Name mit dem

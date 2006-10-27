@@ -10,7 +10,7 @@ use Data::Dumper;
 use FileHandle;
 use File::Path;
 
-$VERSION = '0.1';
+$VERSION = '0.22';
 
 ##------------------------------------------------------------------------------
 # CLASS
@@ -152,17 +152,30 @@ sub new {
 
   #------
 
+  my ($from_charset, $to_charset) = $config->{recode} =~ /(.*?)\.\.(.*)/;
+  
+  $from_charset ||= "latin1";
+  $to_charset   ||= "latin1";
+
+  die "Invalid from_charset '$from_charset'"
+  	unless $from_charset eq 'utf8' or $from_charset eq 'latin1';
+  die "Invalid to_charset '$to_charset'"
+  	unless $to_charset eq 'utf8' or $to_charset eq 'latin1';
+  die "Recoding utf8..latin1 currently not supported"
+  	if $from_charset eq 'utf8' and $to_charset eq 'latin1';
+
   my $self = {
-      dbh                     => $dbh,
-      data_source             => $config->{data_source},
-      username                => $config->{username},
-      dir                     => $config->{directory},
-      type_hash_file          => $config->{type_hash_file},
-      inserts_per_transaction => $config->{inserts_per_transaction},
-      iso2utf8		      => $config->{iso2utf8},
-      type_hash_ref           => $type_hash_ref,
-      quiet_mode              => $quiet_mode,
-      fh_meta                 => $fh_meta,
+      dbh                       => $dbh,
+      data_source               => $config->{data_source},
+      username                  => $config->{username},
+      dir                       => $config->{directory},
+      type_hash_file            => $config->{type_hash_file},
+      inserts_per_transaction   => $config->{inserts_per_transaction},
+      from_charset	        => $from_charset,
+      to_charset	        => $to_charset,
+      type_hash_ref             => $type_hash_ref,
+      quiet_mode                => $quiet_mode,
+      fh_meta                   => $fh_meta,
   };
 
   return bless $self, $class;
@@ -355,14 +368,16 @@ sub _insert_data {
   my $insert_count = 0;
 
   #--- neuen SQL-Handle erzeugen  
-  my $dbh = $self->{dbh};
+  my $dbh          = $self->{dbh};
+  my $from_charset = $self->{from_charset};
+  my $to_charset   = $self->{to_charset};
 
   my $sqlh = Dimedis::Sql->new ( 
       dbh           => $dbh, 
       type          => $self->{type_hash_ref},
       debug         => 0,
       serial_write  => 1,
-      utf8          => $self->{iso2utf8},
+      utf8          => ($to_charset eq 'utf8'),
   );
 
   $self->_write_status( "\n" );
@@ -436,6 +451,7 @@ sub _insert_data {
     my $csv = Dimedis::Sql::CSV->new (
         filename  => $table_dir . "/data.dump",
         delimiter => "\t",
+	layer	  => ( $self->{from_charset} eq 'utf8' ? ':utf8' : '' ),
     );
 
     #--- für jede Zeile aus der CSV-Datei wird jetzt das
@@ -465,13 +481,31 @@ sub _insert_data {
         #--- Wert auf undef setzen, falls der Inhalt der DB-Spalte NULL war
         undef $data_lr->[$i] if $data_lr->[$i] eq "";
 
-        #--- Bei CLOB- und BLOB-Feldern wird vor den Wert aus der CSV-Datei
-        #--- (= Dateiname) der Pfad des Verzeichnisses geschrieben, aus
-        #--- dem die Daten gelesen werden
-        if ( $column_type =~ /^(blob|clob)$/i ) {
-          $data_lr->[$i] = $table_dir . "/" . $data_lr->[$i]
+        #--- Sonderbehandlung von BLOB's und CLOB's
+        if ( $column_type eq 'clob' or $column_type eq 'blob' ) {
+          #-- Behandlung leerer Blobs (für die gibt's keine Datei)
+          my $filename = "$table_dir/$data_lr->[$i]";
+          $filename = "/dev/null" if not -f $filename;
+          if ( $column_type eq 'clob' ) {
+	    if ( $from_charset eq $to_charset ) {
+	      #-- Dateiname übergeben, keine explizite Konvertierung
+	      #-- nötig, also kann Dimedis::Sql das File für uns einlesen.
+              $data_lr->[$i] = $filename;
+	    } else {
+	      #-- Bei unterschiedlichen Zeichensätzen (derzeit gibt's
+	      #-- nur latin1->utf8), muß die Datei :raw eingelesen
+	      #-- werden, da latin1. Beim Insert wird wg. des fehlenden
+	      #-- utf8 Tags automatisch nach utf8 konvertiert.
+	      $data_lr->[$i] = $sqlh->blob2memory (
+	        $filename,
+	        $column_name, $column_type,
+	        ":raw"
+	      );
+	    }
+          } elsif ( $column_type eq 'blob' ) {
+	    $data_lr->[$i] = $filename;
+	  }
         }
-
         $data{$column_name} = $data_lr->[$i];
       }
 
@@ -510,8 +544,8 @@ sub _insert_data {
       );
     }
 
-    #--- einmal pro Tabelle committen?
-    $dbh->commit() if $self->{inserts_per_transaction} eq "";
+    #--- Daten committen
+    $dbh->commit();
   }
 
 }

@@ -1,4 +1,4 @@
-#!/usr/local/bin/perl
+#!/usr/dim/bin/perl
 
 #---------------------------------------------------------------------------
 # SNYOPSIS:
@@ -6,7 +6,7 @@
 #	dsql_test.pl utf8  DBI_DATA_SOURCE USER PW DB
 #---------------------------------------------------------------------------
 
-$ENV{MYSQL_UNIX_PORT} = "/usr/dim/var/mysql4.sock";
+# $ENV{MYSQL_UNIX_PORT} = "/usr/dim/var/mysql4.sock";
 
 use strict;
 use lib 'lib';
@@ -37,10 +37,6 @@ main: {
 		exit;
 	}
 
-#	$ENV{NLS_LANG} = "german_germany.utf8" if $utf8;
-
-	Dimedis::Sql::Test->init;
-
 	my $t = new Dimedis::Sql::Test (
 		dsn      => $dsn,
 		username => $username,
@@ -59,17 +55,21 @@ main: {
 
 	ok ( $t->test("insert") );
 	ok ( $t->test("insert_null") );
+	ok ( $t->test("insert_utf8_latin") );
 	ok ( $t->test("insert_serial_only") );
 	ok ( $t->test("insert_memory_blob") );
 	ok ( $t->test("insert_memory_clob") );
 	ok ( $t->test("insert_file_blob") );
 	ok ( $t->test("insert_file_clob") );
+	ok ( $t->test("insert_utf8_latin_clob") );
 
 	ok ( $t->test("update") );
+	ok ( $t->test("update_utf8_latin") );
 	ok ( $t->test("update_memory_blob") );
 	ok ( $t->test("update_memory_clob") );
 	ok ( $t->test("update_file_blob") );
 	ok ( $t->test("update_file_clob") );
+	ok ( $t->test("update_utf8_latin_clob") );
 
 	ok ( $t->test("delete_file_blob") );
 
@@ -78,14 +78,20 @@ main: {
 	ok ( $t->test("outer_select_action") );
 
 	ok ( $t->test("cmpi") );
+#	ok ( $t->test("contains") );
 
 	if ( $utf8 ) {
 		ok ( $t->test("insert_utf8") );
-		ok ( $t->test("insert_blob_utf8") );
-		ok ( $t->test("insert_clob_utf8") );
+		ok ( $t->test("insert_blob_mem_utf8") );
+		ok ( $t->test("insert_clob_mem_utf8") );
+		ok ( $t->test("insert_blob_file_utf8") );
+		ok ( $t->test("insert_clob_file_utf8") );
+		ok ( $t->test("insert_clob_fh_utf8") );
 		ok ( $t->test("update_utf8") );
-		ok ( $t->test("update_blob_utf8") );
-		ok ( $t->test("update_clob_utf8") );
+		ok ( $t->test("update_blob_mem_utf8") );
+		ok ( $t->test("update_clob_mem_utf8") );
+		ok ( $t->test("update_blob_file_utf8") );
+		ok ( $t->test("update_clob_file_utf8") );
 		ok ( $t->test("get_utf8_array") );
 		ok ( $t->test("get_utf8_hash") );
 		ok ( $t->test("cmpi_utf8") );
@@ -102,7 +108,6 @@ use Data::Dumper;
 use FileHandle;
 
 my %create_table;
-my $type_href;
 
 sub new {
 	my $type = shift;
@@ -127,38 +132,48 @@ sub new {
 	);
 	die $DBI::errstr if $DBI::errstr;
 
+	my $self = bless {
+		dsn      => $dsn,
+		username => $username,
+		password => $password,
+		db       => $db,
+		dbh      => $dbh,
+		utf8     => $utf8,
+	}, $type;
+
+	$self->init;
+
 	my $sqlh = new Dimedis::Sql (
 		dbh   => $dbh,
-		type  => $type_href,
+		type  => $self->{type_href},
 		debug => $debug,
 		cache => 0,
 		utf8  => $utf8,
 	);
+
+	$self->{sqlh} = $sqlh;
 
 	if ( $db_name ) {
 		$sqlh->use_db ( db => $db_name );
 	}
 
 	$sqlh->install;
-
-	my $self = {
-		dsn      => $dsn,
-		username => $username,
-		password => $password,
-		db       => $db,
-		dbh      => $dbh,
-		sqlh     => $sqlh,
-	};
 	
-	return bless $self, $type;
+	return $self;
 }
 
 sub init {
+	my $self = shift;
+
 	# constant randomize, so random numbers are deterministic
 	srand 42;
 	
+	my $mysql_charset_stuff = $self->{utf8} ?
+		"default charset=utf8" :
+		"default charset=latin1 collate=latin1_german1_ci";
+	
 	# Dimedis::Sql type definiton for our test table
-	$type_href = {
+	$self->{type_href} = {
 	  'dsql_test' => {
 		id		=> 'serial',
 		test_case	=> 'varchar(80)',
@@ -204,7 +219,7 @@ sub init {
 			datum		varchar(19),
 			blob_data	mediumblob,
 			clob_data	mediumblob
-		) type = InnoDB
+		) type = InnoDB $mysql_charset_stuff
 	   } ],
 	   "Pg" => [ qq{
 		create table dsql_test (
@@ -343,13 +358,13 @@ sub hash_compare {
 			my ($k,$v);
 			foreach my $k ( sort keys %h1 ) {
 				$v = $h1{$k};
-				printf STDERR "%-15s %4s  %s\n",
-					$k, (is_utf8($v)?"utf8":"    "), "'$v'";
+				printf STDERR "col=%-15s utf8=%4s  data=%s\n",
+					$k, (is_utf8($v)?"1":"0"), "'$v'";
 			}
 			print STDERR "\nread:\n-----\n";     
 			foreach my $k ( sort keys %h2 ) {
 				$v = $h2{$k};
-				printf STDERR "%-15s %4s  %s\n",
+				printf STDERR "col=%-15s utf8=%4s  data=%s\n",
 					$k, (is_utf8($v)?"utf8":"    "), "'$v'";
 			}
 			print STDERR "\n";
@@ -395,6 +410,21 @@ sub create_tables {
 	}
 
 	return 1;
+}
+
+sub mem_to_file {
+	my $self = shift;
+	my %par = @_;
+	my ($mem, $utf8) = @par{'mem','utf8'};
+
+	my $file = "/tmp/dsql.mem.$$";
+	my $fh = FileHandle->new;
+	open ($fh, ">$file") or die "can't write $file";
+	binmode $fh, ":utf8" if $utf8;
+	print $fh $$mem;
+	close $fh;
+
+	return $file;
 }
 
 sub insert {
@@ -448,15 +478,32 @@ sub insert_null {
 	);
 }
 
+sub insert_utf8_latin {
+        my $self = shift;
+	my $sqlh = $self->{sqlh};
+	$self->msg;
+
+        my $data = do { use utf8; "JÃ¶rn Reder, Ã„ÃœÃ–ÃŸ" };
+        
+	return $self->insert_update_check (
+		data => {
+			id		=> undef,
+			str_short	=> $data,
+			str_long	=> $data,
+		},
+		what => 'insert',
+	);
+}
+
 sub insert_update_check {
 	my $self = shift;
-	my $sqlh = $self->{sqlh};
-
-	my %par = @_;
-	my $data = $par{data};
-	my $what = $par{what};
+	my %par    = @_;
+	my $data   = $par{data};
+	my $what   = $par{what};
 	my $where  = $par{where};
 	my $params = $par{params};
+
+	my $sqlh = $self->{sqlh};
 
 	my @caller = caller(1);
 	$caller[3] =~ /::([^:]+)$/;
@@ -515,15 +562,14 @@ sub insert_update_check {
 	foreach my $lob ( grep /lob_data$/, keys %{$data} ) {
 		# lets get the blob into memory,
 		# if not there already
-		if ( not ref $data->{$lob} ) {
-			my $fh = new FileHandle;
-			open ($fh, $data->{$lob})
-				or die "can't read $data->{$lob}";
-			$data->{$lob} = join ('', <$fh>);
-			close $fh;
-		} else {
-			$data->{$lob} = ${$data->{$lob}};
-		}
+		my $type = $lob =~ /clob/ ? "clob" : "blob";
+
+		seek $data->{$lob}, 0, 0 if ref $data->{$lob} and
+					    ref $data->{$lob} ne 'SCALAR';
+
+		$data->{$lob} = ${$sqlh->blob2memory(
+			$data->{$lob}, $lob, $type
+		)};
 
 		my $blob = $sqlh->blob_read (
 			table => 'dsql_test',
@@ -539,8 +585,8 @@ sub insert_update_check {
 	# because Dimedis::Sql does this internally when inserting
 	# to get the same behaviour for all databases.
 
-	foreach my $key ( %{$data} ) {
-		if ( $type_href->{dsql_test}->{$key} !~ /lob/ ) {
+	foreach my $key ( keys %{$data} ) {
+		if ( $self->{type_href}->{dsql_test}->{$key} !~ /lob/ ) {
 			$data->{$key} = undef if $data->{$key} eq '';
 		}
 	}
@@ -621,6 +667,24 @@ sub insert_file_blob {
 	);
 }
 
+sub insert_utf8_latin_clob {
+	my $self = shift;
+	my $sqlh = $self->{sqlh};
+	$self->msg;
+	
+        my $data = do { use utf8; "JÃ¶rn Reder, Ã„ÃœÃ–ÃŸ\n" };
+	my $memory_blob = $data x 10;
+
+	return $self->insert_update_check (
+		data => {
+			id        => undef,
+			clob_data => \$memory_blob,
+                        str_short => "utf8_latin_clob",
+		},
+		what => 'insert',
+	);
+}
+
 sub delete_file_blob {
 	my $self = shift;
 	my $sqlh = $self->{sqlh};
@@ -651,6 +715,25 @@ sub update {
 			str_short	=> " updated test string",
 		},
 		what => 'update',
+	);
+}
+
+sub update_utf8_latin {
+        my $self = shift;
+	my $sqlh = $self->{sqlh};
+	$self->msg;
+
+        my $data      = do { use utf8; "ABC JÃ¶rn Reder, Ã„ÃœÃ–ÃŸ" };
+        my $str_short = do { use utf8; "JÃ¶rn Reder, Ã„ÃœÃ–ÃŸ" };
+        
+	return $self->insert_update_check (
+		data => {
+                    str_short	=> $data,
+                    str_long	=> $data,
+		},
+                where   => "str_short = ?",
+                params  => [ $str_short ],
+		what    => 'update',
 	);
 }
 
@@ -710,6 +793,24 @@ sub update_file_blob {
 	);
 }
 
+sub update_utf8_latin_clob {
+	my $self = shift;
+	my $sqlh = $self->{sqlh};
+	$self->msg;
+	
+        my $data = do { use utf8; "JÃ¶rn Reder, Ã„ÃœÃ–ÃŸ\n" };
+	my $memory_blob = $data x 10;
+
+	return $self->insert_update_check (
+		data => {
+                    clob_data => \$memory_blob
+		},
+		what => 'update',
+                where  => "str_short = ?",
+                params => [ "utf8_latin_clob" ],
+	);
+}
+
 sub cmpi {
 	my $self = shift;
 	my $sqlh = $self->{sqlh};
@@ -736,6 +837,54 @@ sub cmpi {
 			where  $cond",
 	);
 
+	return $read_id == $id;
+}
+
+sub contains {
+	my $self = shift;
+	my $sqlh = $self->{sqlh};
+
+	return if not $sqlh->get_features->{contains};
+
+	$self->msg;
+	
+	my $id = $sqlh->insert (
+		table => "dsql_test",
+		data => {
+			id        => undef,
+			test_case => "contains",
+			str_short => "BRA contains foo schnackel baz",
+		}
+	);
+	
+	my $cond = $sqlh->contains (
+		col       => "str_short",
+		vals      => ['bra', 'baz'],
+		logic_op  => "and",
+		search_op => "sub",
+	);
+	
+	my ($read_id) = $sqlh->get (
+		sql => "select id
+			from   dsql_test
+			where  $cond",
+	);
+
+	return if $read_id != $id;
+	
+	$cond = $sqlh->contains (
+		col       => "str_short",
+		vals      => ['schnackel', 'FACKEL'],
+		logic_op  => "or",
+		search_op => "sub",
+	);
+	
+	($read_id) = $sqlh->get (
+		sql => "select id
+			from   dsql_test
+			where  $cond",
+	);
+	
 	return $read_id == $id;
 }
 
@@ -800,6 +949,13 @@ sub outer_select_create_tables {
 	my $sqlh = $self->{sqlh};
 	$self->msg;
 	
+	my $mysql_charset_stuff = $self->{utf8} ?
+		"default charset=utf8" :
+		"default charset=latin1 collate=latin1_german1_ci";
+
+	$mysql_charset_stuff = ""
+		unless $sqlh->{dbh}->{Driver}->{Name} =~ /mysql/;
+
 	# first create four tables
 	foreach my $t ('A' .. 'D') {
 		eval {
@@ -808,7 +964,11 @@ sub outer_select_create_tables {
 			);
 		};
 		$sqlh->do (
-			sql => "create table $t ( id integer, foo varchar(2), bar varchar(2) )"
+			sql => "create table $t (
+				  id  integer,
+				  foo varchar(2),
+				  bar varchar(2)
+				) $mysql_charset_stuff"
 		);
 	}
 
@@ -994,25 +1154,28 @@ sub insert_utf8 {
 			datum           => "2002052212:13:14",
 		},
 		what => 'insert',
+		utf8 => 1,
 	);
 }
 
-sub insert_blob_utf8 {
+sub insert_blob_mem_utf8 {
 	my $self = shift;
 	my $sqlh = $self->{sqlh};
 	$self->msg;
 
+	my $blob = "Das sind Binärdaten: ÄÖÜ äöü ß\n" x 10; # kein utf8 flag
+
 	return $self->insert_update_check (
 		data => {
 			id => undef,
-			blob_data => "/bin/ls",
+			blob_data => \$blob,
 			str_short => 'Ä1',
 		},
 		what => 'insert',
 	);
 }
 
-sub insert_clob_utf8 {
+sub insert_clob_mem_utf8 {
 	my $self = shift;
 	my $sqlh = $self->{sqlh};
 	$self->msg;
@@ -1027,6 +1190,79 @@ sub insert_clob_utf8 {
 		},
 		what => 'insert',
 	);
+}
+
+sub insert_blob_file_utf8 {
+	my $self = shift;
+	my $sqlh = $self->{sqlh};
+	$self->msg;
+
+	my $blob = "Das sind Binärdaten: ÄÖÜ äöü ß\n" x 10; # kein utf8 flag
+
+	my $file = $self->mem_to_file ( mem => \$blob, utf8 => 0 );
+
+	my $rc = $self->insert_update_check (
+		data => {
+			id        => undef,
+			blob_data => $file,
+			str_short => 'Ä3',
+		},
+		what => 'insert',
+	);
+	
+	unlink $file;
+	
+	return $rc;
+}
+
+sub insert_clob_file_utf8 {
+	my $self = shift;
+	my $sqlh = $self->{sqlh};
+	$self->msg;
+
+	my $clob = "Das ist ein Text mit Umläuten: ÄÖÜ äöü ß\n" x 10; # kein utf8 flag
+
+	my $file = $self->mem_to_file ( mem => \$clob, utf8 => 1 );
+
+	my $rc = $self->insert_update_check (
+		data => {
+			id => undef,
+			clob_data => $file,
+			str_short => 'Ä4',
+		},
+		what => 'insert',
+	);
+	
+	unlink $file;
+	
+	return $rc;
+}
+
+sub insert_clob_fh_utf8 {
+	my $self = shift;
+	my $sqlh = $self->{sqlh};
+	$self->msg;
+
+	my $clob = "Das ist ein Text mit Umläuten: ÄÖÜ äöü ß\n" x 10; # kein utf8 flag
+
+	my $file = $self->mem_to_file ( mem => \$clob, utf8 => 1 );
+
+	my $fh = FileHandle->new;
+	open($fh, $file) or die "can't read $file";
+
+	my $rc = $self->insert_update_check (
+		data => {
+			id => undef,
+			clob_data => $fh,
+			str_short => 'Ä4',
+		},
+		what => 'insert',
+	);
+
+	close $fh;
+	unlink $file;
+	
+	return $rc;
 }
 
 sub update_utf8 {
@@ -1048,22 +1284,26 @@ sub update_utf8 {
 	);
 }
 
-sub update_blob_utf8 {
+sub update_blob_mem_utf8 {
 	my $self = shift;
 	my $sqlh = $self->{sqlh};
 	$self->msg;
 
-	return $self->insert_update_check (
+	my $blob = "Das sind neue Binärdaten: ÄÖÜ äöü ß\n" x 3; # kein utf8 flag
+
+	my $rc = $self->insert_update_check (
 		data => {
-			blob_data => "/bin/rm",
+			blob_data => \$blob,
 		},
 		what   => 'update',
 		where  => "str_short = ?",
 		params => [ "Ä1" ],
 	);
+	
+	return $rc;
 }
 
-sub update_clob_utf8 {
+sub update_clob_mem_utf8 {
 	my $self = shift;
 	my $sqlh = $self->{sqlh};
 	$self->msg;
@@ -1079,6 +1319,53 @@ sub update_clob_utf8 {
 		where  => "str_short = ?",
 		params => [ "Ä2" ],
 	);
+}
+
+sub update_blob_file_utf8 {
+	my $self = shift;
+	my $sqlh = $self->{sqlh};
+	$self->msg;
+
+	my $blob = "Das sind neue Binärdaten: ÄÖÜ äöü ß\n" x 3; # kein utf8 flag
+
+	my $file = $self->mem_to_file ( mem => \$blob, utf8 => 0 );
+
+	my $rc = $self->insert_update_check (
+		data => {
+			blob_data => $file,
+		},
+		what   => 'update',
+		where  => "str_short = ?",
+		params => [ "Ä3" ],
+	);
+	
+	unlink $file;
+	
+	return $rc;
+}
+
+sub update_clob_file_utf8 {
+	my $self = shift;
+	my $sqlh = $self->{sqlh};
+	$self->msg;
+
+	# mit utf8-flag
+	my $clob = "Das ist ein ßßß anderer Text mit Umläuten: \x{263a} ÄÖÜ äöü ß\n" x 10;
+
+	my $file = $self->mem_to_file ( mem => \$clob, utf8 => 1 );
+
+	my $rc = $self->insert_update_check (
+		data => {
+			clob_data => $file,
+		},
+		what   => 'update',
+		where  => "str_short = ?",
+		params => [ "Ä4" ],
+	);
+	
+	unlink $file;
+	
+	return $rc;
 }
 
 sub get_utf8_array {
@@ -1122,7 +1409,7 @@ sub cmpi_utf8 {
 	my $self = shift;
 	my $sqlh = $self->{sqlh};
 	$self->msg;
-	
+
 	my $id = $sqlh->insert (
 		table => "dsql_test",
 		data => {
